@@ -9,6 +9,16 @@ _SINCE = {
     ),
 }
 
+_QUERY = {
+    "type": "string",
+    "description": "Case-insensitive search term to filter results. Omit to return all matches.",
+}
+
+_LIMIT = {
+    "type": "integer",
+    "description": "Maximum number of items to return after filtering and sorting.",
+}
+
 # ------------------------------------------------------------------ read
 
 PARRO_GET_UNREAD_SCHEMA = {
@@ -23,10 +33,30 @@ PARRO_GET_UNREAD_SCHEMA = {
 PARRO_LIST_CHATS_SCHEMA = {
     "name": "parro_list_chats",
     "description": (
-        "List all Parro chatrooms with their IDs, names, and unread counts. "
+        "List Parro chatrooms with their IDs, names, and unread counts. "
+        "Use 'query' to find a chatroom by participant or group name. "
         "Use this to find a chatroom_id before sending a message or reading messages."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                **_QUERY,
+                "description": "Filter chatrooms by name (participant or group names).",
+            },
+            "unread_only": {
+                "type": "boolean",
+                "description": "Only return chatrooms with unread messages (default: false).",
+                "default": False,
+            },
+            "limit": {
+                **_LIMIT,
+                "description": "Maximum chatrooms to return (default: 20).",
+                "default": 20,
+            },
+        },
+        "required": [],
+    },
 }
 
 PARRO_GET_MESSAGES_SCHEMA = {
@@ -49,6 +79,15 @@ PARRO_GET_MESSAGES_SCHEMA = {
                 "default": True,
             },
             "since": _SINCE,
+            "query": {
+                **_QUERY,
+                "description": "Filter messages by text content or chatroom name.",
+            },
+            "limit": {
+                **_LIMIT,
+                "description": "Maximum messages to return, newest first (default: 20).",
+                "default": 20,
+            },
         },
         "required": [],
     },
@@ -57,16 +96,21 @@ PARRO_GET_MESSAGES_SCHEMA = {
 PARRO_GET_ANNOUNCEMENTS_SCHEMA = {
     "name": "parro_get_announcements",
     "description": (
-        "Fetch school announcements from all groups in Parro, sorted newest first. "
-        "Use 'since' to only get recent announcements."
+        "Fetch school announcement summaries from all groups in Parro, sorted newest first. "
+        "Returns titles and metadata only — use parro_get_event_detail for the full body. "
+        "Use 'query' to search by title or group name."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "since": _SINCE,
+            "query": {
+                **_QUERY,
+                "description": "Filter announcements by title or group name.",
+            },
             "limit": {
-                "type": "integer",
-                "description": "Max announcements to return per group (default: 10).",
+                **_LIMIT,
+                "description": "Maximum announcements to return across all groups (default: 10).",
                 "default": 10,
             },
         },
@@ -77,8 +121,9 @@ PARRO_GET_ANNOUNCEMENTS_SCHEMA = {
 PARRO_GET_CALENDAR_SCHEMA = {
     "name": "parro_get_calendar",
     "description": (
-        "Fetch upcoming calendar events from Parro. "
-        "Use 'since' to start from a specific date (default: today)."
+        "Fetch upcoming calendar event summaries from Parro. "
+        "Returns titles and metadata only — use parro_get_event_detail for the full body. "
+        "Use 'query' to search by title."
     ),
     "parameters": {
         "type": "object",
@@ -90,10 +135,14 @@ PARRO_GET_CALENDAR_SCHEMA = {
                     "Defaults to today if omitted."
                 ),
             },
+            "query": {
+                **_QUERY,
+                "description": "Filter calendar events by title.",
+            },
             "limit": {
-                "type": "integer",
-                "description": "Max events to return (default: 20).",
-                "default": 20,
+                **_LIMIT,
+                "description": "Maximum events to return (default: 10).",
+                "default": 10,
             },
         },
         "required": [],
@@ -145,10 +194,26 @@ PARRO_SEND_MESSAGE_SCHEMA = {
 PARRO_GET_CONTACTS_SCHEMA = {
     "name": "parro_get_contacts",
     "description": (
-        "List people you can start a new private Parro chat with: "
-        "teachers, co-parents, and children. Returns contact IDs needed for parro_start_chat."
+        "Search or list people you can start a new private Parro chat with: teachers, children "
+        "(classmates), and their parents/guardians. Each child entry includes guardian_names "
+        "(parent display names) and guardians (with contact_id for use with parro_start_chat). "
+        "Pass 'query' to search by name (e.g. a child's name like 'evan', or a parent/teacher name). "
+        "Omit 'query' to return all contacts."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Case-insensitive search term matched against contact names, guardian names, "
+                    "and child names. Use for questions like 'who is the parent of [child]'. "
+                    "Omit to return all contacts."
+                ),
+            },
+        },
+        "required": [],
+    },
 }
 
 PARRO_START_CHAT_SCHEMA = {

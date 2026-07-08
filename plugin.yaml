@@ -1,5 +1,5 @@
 name: hermes-parro
-version: "1.0"
+version: "1.1"
 description: "Read and reply to Parro school communication. Provides tools for checking messages and announcements, with a browser-based auth flow via /parro-auth."
 requires_env:
   - name: PARRO_USERNAME

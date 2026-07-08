@@ -48,6 +48,41 @@ def _today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00")
 
 
+def _text_matches(text: str, query: str) -> bool:
+    return query.casefold() in (text or "").casefold()
+
+
+def _guardian_contact_entry(guardian: dict, child_name: str) -> dict:
+    return {
+        "contact_id": _link_id(guardian),
+        "name": f"{guardian.get('firstname', '')} {guardian.get('surname', '')}".strip(),
+        "role": "GUARDIAN",
+        "in_chat_room": guardian.get("inChatRoom", False),
+        "child_names": [child_name],
+    }
+
+
+def _merge_contact_entry(existing: dict, incoming: dict) -> None:
+    if incoming.get("child_names"):
+        merged = list(dict.fromkeys((existing.get("child_names") or []) + incoming["child_names"]))
+        existing["child_names"] = merged
+
+
+def _int_arg(args: dict, key: str, default: int) -> int:
+    value = args.get(key)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _query_arg(args: dict) -> str:
+    return (args.get("query") or "").strip()
+
+
+def _matches_any_field(entry: dict, query: str, *fields: str) -> bool:
+    return any(_text_matches(entry.get(field, ""), query) for field in fields)
+
+
 # ----------------------------------------------------------------- handlers
 
 def handle_parro_get_unread(args: dict, **_) -> str:
@@ -77,9 +112,15 @@ def handle_parro_get_unread(args: dict, **_) -> str:
 
 def handle_parro_list_chats(args: dict, **_) -> str:
     try:
+        query = _query_arg(args)
+        unread_only = bool(args.get("unread_only", False))
+        limit = _int_arg(args, "limit", 20)
         rooms = get_client().get_chatrooms()
-        result = [
-            {
+        result = []
+        for r in rooms:
+            if unread_only and _unread_count(r) <= 0:
+                continue
+            entry = {
                 "id": _link_id(r),
                 "name": _room_name(r),
                 "type": r.get("type"),
@@ -87,9 +128,14 @@ def handle_parro_list_chats(args: dict, **_) -> str:
                 "muted": r.get("muted", False),
                 "archived": r.get("archived", False),
             }
-            for r in rooms
-        ]
-        return json.dumps({"chats": result, "count": len(result)})
+            if query and not _text_matches(entry["name"], query):
+                continue
+            result.append(entry)
+        result = result[:limit]
+        payload: dict = {"chats": result, "count": len(result)}
+        if query:
+            payload["query"] = query
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_list_chats: %s", exc)
         return json.dumps({"error": str(exc)})
@@ -101,6 +147,8 @@ def handle_parro_get_messages(args: dict, **_) -> str:
         chatroom_id = args.get("chatroom_id")
         unread_only = args.get("unread_only", True)
         since = args.get("since")
+        query = _query_arg(args)
+        limit = _int_arg(args, "limit", 20)
         my_id = str(client.get_my_identity_id())
 
         if chatroom_id is not None:
@@ -118,6 +166,7 @@ def handle_parro_get_messages(args: dict, **_) -> str:
             rid = room["id"]
             if rid is None:
                 continue
+            room_name = room.get("name", f"Room {rid}")
             for msg in client.get_messages(rid):
                 if msg.get("deleted"):
                     continue
@@ -126,18 +175,25 @@ def handle_parro_get_messages(args: dict, **_) -> str:
                 ts = msg.get("lastModifiedAt", "")
                 if not _after(ts, since):
                     continue
+                text = msg.get("text") or ""
+                if query and not (_text_matches(text, query) or _text_matches(room_name, query)):
+                    continue
                 messages.append({
                     "chatroom_id": rid,
-                    "chatroom_name": room.get("name", f"Room {rid}"),
+                    "chatroom_name": room_name,
                     "message_id": _link_id(msg) or msg.get("id"),
-                    "text": msg.get("text") or "",
+                    "text": text,
                     "dtype": msg.get("dtype", ""),
                     "sender_id": str(msg.get("identity", {}).get("id", "")),
                     "timestamp": ts,
                 })
 
         messages.sort(key=lambda m: m["timestamp"], reverse=True)
-        return json.dumps({"messages": messages, "count": len(messages)})
+        messages = messages[:limit]
+        payload: dict = {"messages": messages, "count": len(messages)}
+        if query:
+            payload["query"] = query
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_get_messages: %s", exc)
         return json.dumps({"error": str(exc)})
@@ -147,7 +203,8 @@ def handle_parro_get_announcements(args: dict, **_) -> str:
     try:
         client = get_client()
         since = args.get("since")
-        limit = int(args.get("limit", 10))
+        query = _query_arg(args)
+        limit = _int_arg(args, "limit", 10)
         groups = client.get_groups()
 
         announcements = []
@@ -156,23 +213,30 @@ def handle_parro_get_announcements(args: dict, **_) -> str:
             group_name = group.get("name") or f"Group {group_id}"
             if group_id is None:
                 continue
-            for ann in client.get_announcements(group_id)[:limit]:
+            for ann in client.get_announcements(group_id):
                 ts = ann.get("lastModifiedAt", "")
                 if not _after(ts, since):
                     continue
-                announcements.append({
+                title = ann.get("title") or ""
+                entry = {
                     "event_id": _link_id(ann) or ann.get("id"),
                     "event_type": "announcement",
                     "group_id": group_id,
                     "group_name": group_name,
-                    "title": ann.get("title") or "",
-                    "body": ann.get("contents") or ann.get("body") or "",
+                    "title": title,
                     "created_at": ann.get("createdAt", ""),
                     "last_modified_at": ts,
-                })
+                }
+                if query and not _matches_any_field(entry, query, "title", "group_name"):
+                    continue
+                announcements.append(entry)
 
         announcements.sort(key=lambda a: a["last_modified_at"], reverse=True)
-        return json.dumps({"announcements": announcements, "count": len(announcements)})
+        announcements = announcements[:limit]
+        payload: dict = {"announcements": announcements, "count": len(announcements)}
+        if query:
+            payload["query"] = query
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_get_announcements: %s", exc)
         return json.dumps({"error": str(exc)})
@@ -182,22 +246,31 @@ def handle_parro_get_calendar(args: dict, **_) -> str:
     try:
         client = get_client()
         since = args.get("since") or _today_iso()
-        limit = int(args.get("limit", 20))
-        items = client.get_calendar_events(since=since)[:limit]
+        query = _query_arg(args)
+        limit = _int_arg(args, "limit", 10)
+        items = client.get_calendar_events(since=since)
 
         events = []
         for evt in items:
-            events.append({
+            title = evt.get("title") or ""
+            entry = {
                 "event_id": _link_id(evt) or evt.get("id"),
                 "event_type": "calendar",
-                "title": evt.get("title") or "",
-                "body": evt.get("contents") or evt.get("body") or "",
+                "title": title,
                 "date": evt.get("sortDate") or evt.get("createdAt", ""),
                 "children": [c.get("child", {}).get("firstname", "") for c in evt.get("children", [])],
                 "cancelled": evt.get("cancelled", False),
                 "last_modified_at": evt.get("lastModifiedAt", ""),
-            })
-        return json.dumps({"events": events, "count": len(events)})
+            }
+            if query and not _text_matches(title, query):
+                continue
+            events.append(entry)
+
+        events = events[:limit]
+        payload: dict = {"events": events, "count": len(events)}
+        if query:
+            payload["query"] = query
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_get_calendar: %s", exc)
         return json.dumps({"error": str(exc)})
@@ -231,7 +304,11 @@ def handle_parro_get_event_detail(args: dict, **_) -> str:
 def handle_parro_send_message(args: dict, **_) -> str:
     try:
         result = get_client().send_message(int(args["chatroom_id"]), str(args["text"]))
-        return json.dumps({"success": True, "result": result})
+        message_id = _link_id(result) or result.get("id")
+        payload: dict = {"success": True, "chatroom_id": int(args["chatroom_id"])}
+        if message_id is not None:
+            payload["message_id"] = message_id
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_send_message: %s", exc)
         return json.dumps({"error": str(exc)})
@@ -239,17 +316,78 @@ def handle_parro_send_message(args: dict, **_) -> str:
 
 def handle_parro_get_contacts(args: dict, **_) -> str:
     try:
+        query = (args.get("query") or "").strip()
         contacts = get_client().get_chat_contacts()
-        result = []
+        result: list[dict] = []
+        by_id: dict[int, dict] = {}
+
+        def add(entry: dict) -> None:
+            contact_id = entry.get("contact_id")
+            if contact_id is None:
+                return
+            if contact_id in by_id:
+                _merge_contact_entry(by_id[contact_id], entry)
+            else:
+                by_id[contact_id] = entry
+
         for c in contacts:
-            result.append({
+            dtype = c.get("dtype", "")
+            entry: dict = {
                 "contact_id": _link_id(c),
                 "name": f"{c.get('firstname', '')} {c.get('surname', '')}".strip(),
-                "role": c.get("role") or c.get("dtype", ""),
-                "child_names": c.get("childNames", []),
+                "role": c.get("role") or (
+                    "CHILD" if "Child" in dtype else
+                    "TEACHER" if "Teacher" in dtype else
+                    "GUARDIAN"
+                ),
                 "in_chat_room": c.get("inChatRoom", False),
-            })
-        return json.dumps({"contacts": result, "count": len(result)})
+            }
+            # For children: include the names and IDs of their parents/guardians
+            if c.get("guardianNames"):
+                entry["guardian_names"] = c["guardianNames"]
+            if c.get("guardians"):
+                entry["guardians"] = [
+                    {
+                        "contact_id": _link_id(g),
+                        "name": f"{g.get('firstname', '')} {g.get('surname', '')}".strip(),
+                    }
+                    for g in c["guardians"]
+                ]
+            # For guardians: include which children they belong to
+            if c.get("childNames"):
+                entry["child_names"] = c["childNames"]
+
+            if not query:
+                result.append(entry)
+                continue
+
+            child_name = entry["name"]
+            self_hit = _text_matches(child_name, query)
+            child_names_hit = any(
+                _text_matches(name, query) for name in entry.get("child_names", [])
+            )
+            guardian_hit = any(
+                _text_matches(name, query) for name in entry.get("guardian_names", [])
+            )
+
+            for guardian in c.get("guardians", []):
+                guardian_name = f"{guardian.get('firstname', '')} {guardian.get('surname', '')}".strip()
+                this_guardian_hit = _text_matches(guardian_name, query)
+                if this_guardian_hit:
+                    guardian_hit = True
+                if this_guardian_hit or self_hit:
+                    add(_guardian_contact_entry(guardian, child_name))
+
+            if self_hit or child_names_hit or guardian_hit:
+                add(entry)
+
+        if query:
+            result = list(by_id.values())
+
+        payload: dict = {"contacts": result, "count": len(result)}
+        if query:
+            payload["query"] = query
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_get_contacts: %s", exc)
         return json.dumps({"error": str(exc)})
@@ -260,17 +398,31 @@ def handle_parro_start_chat(args: dict, **_) -> str:
         client = get_client()
         contact_id = int(args["contact_id"])
         contacts = client.get_chat_contacts()
+
+        # First look in top-level contacts
         contact = next((c for c in contacts if _link_id(c) == contact_id), None)
+
+        # If not found, search within children's guardian lists
+        # (parent IDs come from child.guardians[].links[rel=self].id)
+        if contact is None:
+            for c in contacts:
+                for guardian in c.get("guardians", []):
+                    if _link_id(guardian) == contact_id:
+                        contact = guardian
+                        break
+                if contact is not None:
+                    break
+
         if contact is None:
             return json.dumps({"error": f"Contact {contact_id} not found. Use parro_get_contacts to list available contacts."})
+
         result = client.create_chatroom(contact)
-        # Extract the new chatroom ID from links[rel=self]
         new_id = None
         for link in (result.get("links") or result.get("items", [{}])[0].get("links", [])):
             if link.get("rel") == "self":
                 new_id = link.get("id")
                 break
-        return json.dumps({"success": True, "chatroom_id": new_id, "result": result})
+        return json.dumps({"success": True, "chatroom_id": new_id})
     except Exception as exc:
         logger.error("parro_start_chat: %s", exc)
         return json.dumps({"error": str(exc)})

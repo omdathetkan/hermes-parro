@@ -133,7 +133,7 @@ def test_messages():
         print(f"  Text : {msg['text'][:120]}")
 
 def test_announcements():
-    _section("Announcements (latest 5 per group)")
+    _section("Announcements (limit=5)")
     result = handle_parro_get_announcements({"limit": 5})
     data = json.loads(result)
     if "error" in data:
@@ -144,7 +144,6 @@ def test_announcements():
     for ann in data["announcements"][:5]:
         print(f"\n  Group : {ann['group_name']}")
         print(f"  Title : {ann['title']}")
-        print(f"  Body  : {(ann['body'] or '')[:120]}")
         print(f"  Date  : {ann['last_modified_at']}")
         if first_id is None:
             first_id = ann.get("event_id")
@@ -168,26 +167,27 @@ def test_calendar():
         print(f"  Children: {evt.get('children', [])}")
 
 def test_list_chats():
-    _section("All chatrooms")
-    result = handle_parro_list_chats({})
+    _section("Chatrooms (query=Esther, limit=5)")
+    result = handle_parro_list_chats({"query": "Esther", "limit": 5})
     data = json.loads(result)
     if "error" in data:
         print(f"ERROR: {data['error']}")
         return
-    print(f"Total chatrooms: {data['count']}")
-    for chat in data["chats"][:5]:
-        print(f"  id={chat['id']}  unread={chat['unread_count']}  {chat['name']}")
+    print(f"Matches: {data['count']}")
+    for chat in data["chats"]:
+        print(f"  id={chat['id']}  unread={chat['unread_count']}  {chat['name'][:80]}")
 
 def test_contacts():
-    _section("Chat contacts")
-    result = handle_parro_get_contacts({})
-    data = json.loads(result)
-    if "error" in data:
-        print(f"ERROR: {data['error']}")
-        return
-    print(f"Total contacts: {data['count']}")
-    for c in data["contacts"][:5]:
-        print(f"  id={c['contact_id']}  {c['name']}  ({c['role']})  children={c['child_names']}")
+    for q in ("evan", "Alexander"):
+        _section(f"Chat contacts (query={q})")
+        result = handle_parro_get_contacts({"query": q})
+        data = json.loads(result)
+        if "error" in data:
+            print(f"ERROR: {data['error']}")
+            return
+        print(f"Matches: {data['count']}")
+        for c in data["contacts"]:
+            print(f"  id={c['contact_id']}  {c['name']}  ({c['role']})")
 
 # ---------------------------------------------------------------------------
 # Main
