@@ -9,6 +9,7 @@ you never need to reauthenticate manually.
 import json
 import logging
 import os
+import ssl
 import threading
 import time
 import urllib.error
@@ -22,6 +23,18 @@ _TOKEN_URL = "https://inloggen.parnassys.net/idp/oauth2/token"
 _API_BASE = "https://rest-v2.parro.com/rest/v2"
 _CLIENT_ID = "MQygAaSBUcAgPU2WInKt"
 _ACCEPT = "application/vnd.topicus.geon+json;version=217"
+
+
+def _urlopen(req, timeout: int = 15):
+    """urlopen wrapper that strips trailing dots from hostnames (Windows SSL fix)."""
+    host = req.host if hasattr(req, "host") else ""
+    if host:
+        if ":" in host:
+            h, p = host.rsplit(":", 1)
+            req.host = h.rstrip(".") + ":" + p
+        else:
+            req.host = host.rstrip(".")
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 class ParroClient:
@@ -68,9 +81,9 @@ class ParroClient:
         self._save_config()
 
     def get_credentials(self) -> tuple[str, str] | None:
-        """Return (username, password) from config, or None if not set."""
-        u = self._config.get("username")
-        p = self._config.get("password")
+        """Return (username, password), preferring env vars over saved config."""
+        u = os.environ.get("PARRO_USERNAME") or self._config.get("username")
+        p = os.environ.get("PARRO_PASSWORD") or self._config.get("password")
         return (u, p) if u and p else None
 
     def get_refresh_token(self) -> str | None:
@@ -118,7 +131,7 @@ class ParroClient:
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
 
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with _urlopen(req) as resp:
                 result = json.loads(resp.read())
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")
@@ -144,14 +157,21 @@ class ParroClient:
         if self._guardian_id:
             return self._guardian_id
         data = self._request("GET", "/account/me", with_role=False)
-        # Try links[rel=self].id first, then a top-level id field
+        # Guardian ID lives at account.identity.guardians[0].links[rel=self].id
+        try:
+            guardians = data["identity"]["guardians"]
+            for guardian in guardians:
+                for link in guardian.get("links", []):
+                    if link.get("rel") == "self" and "id" in link:
+                        self._guardian_id = str(link["id"])
+                        return self._guardian_id
+        except (KeyError, TypeError, IndexError):
+            pass
+        # Fallback: top-level links[rel=self] (account ID — may not work for all endpoints)
         for link in data.get("links", []):
             if link.get("rel") == "self" and "id" in link:
                 self._guardian_id = str(link["id"])
                 return self._guardian_id
-        if "id" in data:
-            self._guardian_id = str(data["id"])
-            return self._guardian_id
         raise RuntimeError("Could not determine guardian ID from /account/me response")
 
     # ----------------------------------------------------------- HTTP helpers
@@ -171,7 +191,7 @@ class ParroClient:
             req.add_header("parro-authorization-role", f"GUARDIAN:{gid}")
 
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with _urlopen(req) as resp:
                 raw = resp.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:

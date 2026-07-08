@@ -14,11 +14,15 @@ Returns (access_token, refresh_token) on success; raises RuntimeError on failure
 """
 import base64
 import hashlib
+import html
 import html.parser
+import http.client
 import http.cookiejar
 import json
 import logging
 import os
+import re
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,11 +30,32 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 _CLIENT_ID = "MQygAaSBUcAgPU2WInKt"
-_REDIRECT_URI = "https://talk.parro.com"
+_REDIRECT_URI = "https://talk.parro.com/oauth2"
 _TOKEN_URL = "https://inloggen.parnassys.net/idp/oauth2/token"
 _OIDC_DISCOVERY_URL = "https://inloggen.parnassys.net/idp/.well-known/openid-configuration"
 _FALLBACK_AUTH_URL = "https://inloggen.parnassys.net/idp/oauth2/authorize"
-_USER_AGENT = "Mozilla/5.0 (compatible; hermes-parro/1.0)"
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
+
+
+# ---------------------------------------------------------------------------
+# SSL fix: Windows DNS resolvers sometimes append a trailing dot to FQDNs
+# (e.g. 'inloggen.parnassys.net.') which breaks Python SSL hostname verification.
+# ---------------------------------------------------------------------------
+
+class _FixHostnameHTTPSHandler(urllib.request.HTTPSHandler):
+    """Strip trailing dots from hostnames before SSL connects."""
+    def https_open(self, req):
+        host = req.host
+        if ":" in host:
+            h, p = host.rsplit(":", 1)
+            req.host = h.rstrip(".") + ":" + p
+        else:
+            req.host = host.rstrip(".")
+        return super().https_open(req)
 
 
 # ---------------------------------------------------------------------------
@@ -89,12 +114,20 @@ class _FormParser(html.parser.HTMLParser):
                 "method": a.get("method", "post").lower(),
                 "fields": {},
             }
-        elif tag == "input" and self._current is not None:
+        elif tag in ("input", "button") and self._current is not None:
             name = a.get("name", "")
             value = a.get("value", "")
-            itype = a.get("type", "text").lower()
-            if name and itype not in ("submit", "button", "image", "reset"):
+            itype = a.get("type", "text" if tag == "input" else "submit").lower()
+            # Include everything except purely decorative/reset inputs.
+            # Submit buttons ARE included — Wicket requires them to identify the action.
+            if name and itype not in ("image", "reset"):
                 self._current["fields"][name] = value
+        elif tag == "a" and self._current is not None:
+            # Wicket login buttons are <a onclick="...innerHTML += '<input name=X value=Y />'...">
+            # Parse the injected hidden fields out of the onclick JavaScript.
+            onclick = html.unescape(a.get("onclick", ""))
+            for m in re.finditer(r'name=["\'](\w+)["\'].*?value=["\']([^"\']*)["\']', onclick):
+                self._current["fields"][m.group(1)] = m.group(2)
 
     def handle_endtag(self, tag: str):
         if tag == "form" and self._current is not None:
@@ -125,11 +158,14 @@ def _identify_fields(fields: dict) -> tuple[str, str]:
     pw_field = None
     user_field = None
 
-    for name in fields:
+    for name, value in fields.items():
         lower = name.lower()
+        # Skip fields that look like submit buttons (non-empty fixed values)
+        if lower in ("aanmelden", "submit", "login", "inloggen") and value:
+            continue
         if "password" in lower or lower in ("pw", "wachtwoord", "passwd"):
             pw_field = name
-        elif any(x in lower for x in ("username", "user", "email", "login",
+        elif any(x in lower for x in ("username", "user", "email", "mail",
                                        "gebruiker", "account", "naam")):
             user_field = name
 
@@ -191,21 +227,29 @@ def login(username: str, password: str) -> tuple[str, str]:
     verifier, challenge = _pkce_pair()
     auth_base = _get_authorization_endpoint()
 
+    import uuid
     auth_url = auth_base + "?" + urllib.parse.urlencode({
-        "response_type": "code",
         "client_id": _CLIENT_ID,
         "redirect_uri": _REDIRECT_URI,
+        "response_type": "code",
         "scope": "openid",
-        "code_challenge": challenge,
+        "oauth2": "authorize",
+        "state": str(uuid.uuid4()),
         "code_challenge_method": "S256",
+        "code_challenge": challenge,
     })
 
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(jar),
         _StopAtParroHandler(),
+        _FixHostnameHTTPSHandler(),
     )
-    opener.addheaders = [("User-Agent", _USER_AGENT)]
+    opener.addheaders = [
+        ("User-Agent", _USER_AGENT),
+        ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+        ("Accept-Language", "nl-NL,nl;q=0.9,en;q=0.8"),
+    ]
 
     # ---- Step 1: Load login page ----
     try:
@@ -226,11 +270,16 @@ def login(username: str, password: str) -> tuple[str, str]:
     form = _find_login_form(parser.forms)
     user_field, pw_field = _identify_fields(form["fields"])
 
-    # Resolve relative action URL
+    # Resolve relative form action URL against the login page URL
     action = form["action"] or login_url
     if not action.startswith("http"):
-        p = urllib.parse.urlparse(login_url)
-        action = f"{p.scheme}://{p.netloc}{action}"
+        action = urllib.parse.urljoin(login_url, action)
+
+    logger.debug("Login page URL : %s", login_url)
+    logger.debug("Form action    : %s", action)
+    logger.debug("Form fields    : %s", list(form["fields"].keys()))
+    logger.debug("Username field : %s", user_field)
+    logger.debug("Password field : %s", pw_field)
 
     # ---- Step 3: Submit credentials ----
     fields = dict(form["fields"])
@@ -247,6 +296,11 @@ def login(username: str, password: str) -> tuple[str, str]:
     try:
         with opener.open(req, timeout=15) as resp:
             final_url = resp.geturl()
+            body = resp.read().decode("utf-8", errors="replace")
+            logger.debug("POST response URL: %s", final_url)
+            # Log a snippet of the response to spot Wicket error messages
+            snippet = " | ".join(body.split("\n")[0:5])[:400]
+            logger.debug("POST response body (start): %s", snippet)
             if "code=" in final_url:
                 redirect_url = final_url
             else:
@@ -255,6 +309,7 @@ def login(username: str, password: str) -> tuple[str, str]:
                     "Check your username and password."
                 )
     except _ParroRedirect as exc:
+        logger.debug("Captured redirect: %s", exc.url)
         redirect_url = exc.url
 
     # ---- Step 5: Extract authorization code ----
@@ -277,9 +332,12 @@ def login(username: str, password: str) -> tuple[str, str]:
     token_req = urllib.request.Request(_TOKEN_URL, data=token_body, method="POST")
     token_req.add_header("Content-Type", "application/x-www-form-urlencoded")
     token_req.add_header("Accept", "*/*")
+    token_req.add_header("Origin", "https://talk.parro.com")
+    token_req.add_header("Referer", "https://talk.parro.com/")
 
     try:
-        with urllib.request.urlopen(token_req, timeout=15) as resp:
+        # Use the same opener so Cloudflare sees the established session cookies
+        with opener.open(token_req, timeout=15) as resp:
             result = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")

@@ -49,7 +49,7 @@ _HTML = """\
 </head>
 <body>
 <div class="card">
-  <h1>\ud83d\udd11 Parro Authentication</h1>
+  <h1>&#x1F511; Parro Authentication</h1>
   <p class="sub">Enter your Parro login credentials. They are stored locally in
   <code>~/.hermes/parro.json</code> (mode 600) and never leave your machine.</p>
 
