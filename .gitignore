@@ -1,0 +1,7 @@
+# Local test credentials — never commit this
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
