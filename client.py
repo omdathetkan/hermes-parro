@@ -231,6 +231,57 @@ class ParroClient:
         data = self._get(f"/event?dtype=event.RAnnouncementEventPrimer&group={group_id}")
         return data.get("items", data) if isinstance(data, dict) else data
 
+    def get_children(self) -> list:
+        data = self._get("/child")
+        return data.get("items", data) if isinstance(data, dict) else data
+
+    def get_calendar_events(self, since: str | None = None) -> list:
+        params = "dtype=event.RCalendarItemEventPrimer&sort=asc-stream"
+        if since:
+            params += "&sortDateSince=" + urllib.parse.quote(since)
+        data = self._get(f"/event?{params}")
+        return data.get("items", data) if isinstance(data, dict) else data
+
+    def get_chat_contacts(self) -> list:
+        """List people available to start a private chat with (teachers + guardian co-parents)."""
+        data = self._get("/chatroom/identity?sort=asc-streamRole")
+        return data.get("items", data) if isinstance(data, dict) else data
+
+    def get_event_detail(self, event_id: int, dtype: str | None = None) -> dict:
+        path = f"/event/{event_id}"
+        if dtype:
+            path += f"?dtype={urllib.parse.quote(dtype)}"
+        return self._get(path)
+
+    def create_chatroom(self, contact: dict) -> dict:
+        """Create a new SINGLE chatroom. contact is an item from get_chat_contacts()."""
+        dtype = contact.get("dtype", "")
+        entry: dict = {
+            "dtype": "chat.RChatRoomCreate",
+            "links": [],
+            "muted": False,
+            "todo": False,
+            "admin": False,
+            "active": True,
+            "archived": False,
+            "type": "SINGLE",
+            "hasGuardians": False,
+            "memberNames": [],
+            "childNames": [],
+            "repliesEnabled": True,
+            "dnd": False,
+            "children": [],
+            "guardians": [],
+            "teachers": [],
+        }
+        if "Teacher" in dtype:
+            entry["teachers"] = [contact]
+        elif "Child" in dtype:
+            entry["children"] = [contact]
+        else:
+            entry["guardians"] = [contact]
+        return self._post("/chatroom", {"items": [entry]})
+
 
 # ---------------------------------------------------------------- singleton
 

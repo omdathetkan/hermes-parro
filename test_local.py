@@ -69,9 +69,13 @@ for _m in ("client", "login", "schemas", "tools", "auth_server"):
 from hermes_parro.client import get_client
 from hermes_parro.tools import (
     check_parro_available,
-    handle_parro_get_unread,
+    handle_parro_get_calendar,
+    handle_parro_get_contacts,
+    handle_parro_get_event_detail,
     handle_parro_get_messages,
     handle_parro_get_announcements,
+    handle_parro_get_unread,
+    handle_parro_list_chats,
 )
 
 # ---------------------------------------------------------------------------
@@ -136,11 +140,54 @@ def test_announcements():
         print(f"ERROR: {data['error']}")
         return
     print(f"Total announcements returned: {data['count']}")
+    first_id = None
     for ann in data["announcements"][:5]:
         print(f"\n  Group : {ann['group_name']}")
         print(f"  Title : {ann['title']}")
         print(f"  Body  : {(ann['body'] or '')[:120]}")
         print(f"  Date  : {ann['last_modified_at']}")
+        if first_id is None:
+            first_id = ann.get("event_id")
+    if first_id:
+        _section(f"Event detail (id={first_id})")
+        detail = json.loads(handle_parro_get_event_detail({"event_id": first_id, "event_type": "announcement"}))
+        print(f"  Title : {detail.get('title')}")
+        print(f"  Body  : {(detail.get('body') or '')[:200]}")
+
+def test_calendar():
+    _section("Upcoming calendar events")
+    result = handle_parro_get_calendar({})
+    data = json.loads(result)
+    if "error" in data:
+        print(f"ERROR: {data['error']}")
+        return
+    print(f"Total events: {data['count']}")
+    for evt in data["events"][:5]:
+        print(f"\n  Title : {evt['title']}")
+        print(f"  Date  : {evt['date']}")
+        print(f"  Children: {evt.get('children', [])}")
+
+def test_list_chats():
+    _section("All chatrooms")
+    result = handle_parro_list_chats({})
+    data = json.loads(result)
+    if "error" in data:
+        print(f"ERROR: {data['error']}")
+        return
+    print(f"Total chatrooms: {data['count']}")
+    for chat in data["chats"][:5]:
+        print(f"  id={chat['id']}  unread={chat['unread_count']}  {chat['name']}")
+
+def test_contacts():
+    _section("Chat contacts")
+    result = handle_parro_get_contacts({})
+    data = json.loads(result)
+    if "error" in data:
+        print(f"ERROR: {data['error']}")
+        return
+    print(f"Total contacts: {data['count']}")
+    for c in data["contacts"][:5]:
+        print(f"  id={c['contact_id']}  {c['name']}  ({c['role']})  children={c['child_names']}")
 
 # ---------------------------------------------------------------------------
 # Main
@@ -155,8 +202,11 @@ if __name__ == "__main__":
     print("\nTesting API access...")
     try:
         test_unread()
+        test_list_chats()
         test_messages()
         test_announcements()
+        test_calendar()
+        test_contacts()
         print("\n✓ All tests completed.")
     except Exception as exc:
         print(f"\n✗ Error: {exc}")
