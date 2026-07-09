@@ -304,7 +304,8 @@ def handle_parro_get_event_detail(args: dict, **_) -> str:
 def handle_parro_send_message(args: dict, **_) -> str:
     try:
         result = get_client().send_message(int(args["chatroom_id"]), str(args["text"]))
-        message_id = _link_id(result) or result.get("id")
+        created = (result.get("items") or [None])[0] or result
+        message_id = _link_id(created) or created.get("id")
         payload: dict = {"success": True, "chatroom_id": int(args["chatroom_id"])}
         if message_id is not None:
             payload["message_id"] = message_id

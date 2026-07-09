@@ -221,7 +221,10 @@ class ParroClient:
         return data.get("items", data) if isinstance(data, dict) else data
 
     def send_message(self, chatroom_id: int, text: str) -> dict:
-        return self._post(f"/chatroom/{chatroom_id}/chatmessage", {"text": text})
+        return self._post(
+            f"/chatroom/{chatroom_id}/chatmessage",
+            {"items": [{"dtype": "chat.RChatTextMessage", "text": text}]},
+        )
 
     def get_groups(self) -> list:
         data = self._get("/group?dtype=identity.RHomeGroup")
