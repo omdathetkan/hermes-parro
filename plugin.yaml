@@ -1,6 +1,10 @@
 name: hermes-parro
-version: "1.1"
-description: "Read and reply to Parro school communication. Provides tools for checking messages and announcements, with a browser-based auth flow via /parro-auth."
+version: "1.2"
+description: >-
+  Read and reply to Parro school communication. Use parro_get_contacts(query=...)
+  to look up parents/teachers by name, parro_start_chat to open a chat, then
+  parro_send_message to send. List tools return summaries — use parro_get_event_detail
+  for full announcement/calendar text. Auth via /parro-auth or PARRO_USERNAME/PARRO_PASSWORD.
 requires_env:
   - name: PARRO_USERNAME
     description: "Your Parro login email address"

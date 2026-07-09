@@ -11,7 +11,10 @@ _SINCE = {
 
 _QUERY = {
     "type": "string",
-    "description": "Case-insensitive search term to filter results. Omit to return all matches.",
+    "description": (
+        "Case-insensitive search term. ALWAYS provide this when the user mentions a "
+        "specific name or topic — omitting it returns the full list (90+ items)."
+    ),
 }
 
 _LIMIT = {
@@ -24,8 +27,9 @@ _LIMIT = {
 PARRO_GET_UNREAD_SCHEMA = {
     "name": "parro_get_unread",
     "description": (
-        "Check Parro for unread activity. Returns counts for unread chat messages, "
-        "announcements, and calendar items, plus which chatrooms have unread messages."
+        "Lightweight check for unread Parro activity. Call this FIRST when the user asks "
+        "'anything new?' or 'unread messages'. Returns counts plus chatrooms with unread "
+        "messages. Follow up with parro_get_messages only if there are unread chats."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -33,16 +37,21 @@ PARRO_GET_UNREAD_SCHEMA = {
 PARRO_LIST_CHATS_SCHEMA = {
     "name": "parro_list_chats",
     "description": (
-        "List Parro chatrooms with their IDs, names, and unread counts. "
-        "Use 'query' to find a chatroom by participant or group name. "
-        "Use this to find a chatroom_id before sending a message or reading messages."
+        "Find existing Parro chatrooms and their chatroom_id. "
+        "ALWAYS pass 'query' with a person's first name when looking for a specific chat "
+        "(e.g. query='Alexander'). For 1:1 chats, pick the room with type 'SINGLE'. "
+        "To message someone you have NOT chatted with yet, use parro_get_contacts + "
+        "parro_start_chat instead. Returns at most 20 chatrooms by default."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "query": {
                 **_QUERY,
-                "description": "Filter chatrooms by name (participant or group names).",
+                "description": (
+                    "Filter by participant or group name. Use the first name "
+                    "(e.g. 'Alexander', not 'Alexander Ettema'). Required for person lookups."
+                ),
             },
             "unread_only": {
                 "type": "boolean",
@@ -62,9 +71,9 @@ PARRO_LIST_CHATS_SCHEMA = {
 PARRO_GET_MESSAGES_SCHEMA = {
     "name": "parro_get_messages",
     "description": (
-        "Fetch chat messages from Parro. By default returns messages from chatrooms "
-        "with unread messages. Pass chatroom_id to fetch a specific room. "
-        "Use 'since' to limit to recent messages only."
+        "Read chat messages. Defaults to unread chatrooms only (max 20 messages). "
+        "Pass chatroom_id when you already know the room (from parro_list_chats or "
+        "parro_start_chat). Check parro_get_unread first to see if there is anything new."
     ),
     "parameters": {
         "type": "object",
@@ -96,9 +105,9 @@ PARRO_GET_MESSAGES_SCHEMA = {
 PARRO_GET_ANNOUNCEMENTS_SCHEMA = {
     "name": "parro_get_announcements",
     "description": (
-        "Fetch school announcement summaries from all groups in Parro, sorted newest first. "
-        "Returns titles and metadata only — use parro_get_event_detail for the full body. "
-        "Use 'query' to search by title or group name."
+        "List recent school announcement summaries (title + date, no body). "
+        "Returns at most 10 by default. Use 'query' to search for a specific topic. "
+        "Call parro_get_event_detail with the event_id when the user wants the full text."
     ),
     "parameters": {
         "type": "object",
@@ -121,9 +130,9 @@ PARRO_GET_ANNOUNCEMENTS_SCHEMA = {
 PARRO_GET_CALENDAR_SCHEMA = {
     "name": "parro_get_calendar",
     "description": (
-        "Fetch upcoming calendar event summaries from Parro. "
-        "Returns titles and metadata only — use parro_get_event_detail for the full body. "
-        "Use 'query' to search by title."
+        "List upcoming school calendar events (title + date, no body). "
+        "Defaults to events from today, max 10. Use 'query' to find a specific event. "
+        "Call parro_get_event_detail with the event_id for full details."
     ),
     "parameters": {
         "type": "object",
@@ -177,13 +186,20 @@ PARRO_GET_EVENT_DETAIL_SCHEMA = {
 
 PARRO_SEND_MESSAGE_SCHEMA = {
     "name": "parro_send_message",
-    "description": "Send a reply to a Parro chatroom.",
+    "description": (
+        "Send a message in an existing Parro chatroom. Requires chatroom_id — NOT contact_id. "
+        "Workflow for new conversations: parro_get_contacts → parro_start_chat → parro_send_message. "
+        "Workflow for existing chats: parro_list_chats → parro_send_message."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
             "chatroom_id": {
                 "type": "integer",
-                "description": "ID of the chatroom to send to (get from parro_list_chats).",
+                "description": (
+                    "Chatroom ID from parro_start_chat or parro_list_chats. "
+                    "Cannot use contact_id here."
+                ),
             },
             "text": {"type": "string", "description": "The message text to send."},
         },
@@ -194,11 +210,12 @@ PARRO_SEND_MESSAGE_SCHEMA = {
 PARRO_GET_CONTACTS_SCHEMA = {
     "name": "parro_get_contacts",
     "description": (
-        "Search or list people you can start a new private Parro chat with: teachers, children "
-        "(classmates), and their parents/guardians. Each child entry includes guardian_names "
-        "(parent display names) and guardians (with contact_id for use with parro_start_chat). "
-        "Pass 'query' to search by name (e.g. a child's name like 'evan', or a parent/teacher name). "
-        "Omit 'query' to return all contacts."
+        "Look up teachers, children, and parents/guardians by name. "
+        "ALWAYS pass 'query' when the user mentions a person — e.g. query='evan' for "
+        "'who is Evan's dad?'. Without query this returns 90+ contacts and should only "
+        "be used when the user explicitly asks for the full contact list. "
+        "Matching parents are returned as GUARDIAN entries with contact_id. "
+        "To message a parent: use their contact_id with parro_start_chat, then parro_send_message."
     ),
     "parameters": {
         "type": "object",
@@ -206,9 +223,9 @@ PARRO_GET_CONTACTS_SCHEMA = {
             "query": {
                 "type": "string",
                 "description": (
-                    "Case-insensitive search term matched against contact names, guardian names, "
-                    "and child names. Use for questions like 'who is the parent of [child]'. "
-                    "Omit to return all contacts."
+                    "Person to look up (first name is enough, e.g. 'evan', 'Alexander'). "
+                    "Matches children, parents/guardians, and teachers. "
+                    "REQUIRED for questions like 'who is [child]'s dad/mom/parent'."
                 ),
             },
         },
@@ -219,15 +236,21 @@ PARRO_GET_CONTACTS_SCHEMA = {
 PARRO_START_CHAT_SCHEMA = {
     "name": "parro_start_chat",
     "description": (
-        "Start a new private Parro chat with a contact. "
-        "Get the contact_id from parro_get_contacts first."
+        "Open a private 1:1 Parro chat with someone (does not send a message). "
+        "Call this before parro_send_message when there is no existing chat yet. "
+        "Get contact_id from parro_get_contacts — use the GUARDIAN entry for parents, "
+        "not the child. Returns chatroom_id for use with parro_send_message."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "contact_id": {
                 "type": "integer",
-                "description": "The numeric contact ID from parro_get_contacts.",
+                "description": (
+                    "contact_id of the person to chat with, from parro_get_contacts. "
+                    "For parents, use the GUARDIAN entry's contact_id (e.g. Alexander's ID, "
+                    "not Evan's)."
+                ),
             },
         },
         "required": ["contact_id"],
