@@ -83,6 +83,30 @@ def _matches_any_field(entry: dict, query: str, *fields: str) -> bool:
     return any(_text_matches(entry.get(field, ""), query) for field in fields)
 
 
+def _calendar_item(evt: dict) -> dict:
+    item = evt.get("calendarItem")
+    return item if isinstance(item, dict) else {}
+
+
+def _event_title(evt: dict) -> str:
+    ci = _calendar_item(evt)
+    return evt.get("title") or ci.get("title") or ""
+
+
+def _event_body(evt: dict) -> str:
+    ci = _calendar_item(evt)
+    return (
+        evt.get("contents") or evt.get("body") or evt.get("text")
+        or ci.get("contents") or ci.get("body") or ci.get("description")
+        or ""
+    )
+
+
+def _event_date(evt: dict) -> str:
+    ci = _calendar_item(evt)
+    return evt.get("sortDate") or ci.get("startDate") or evt.get("createdAt") or ""
+
+
 # ----------------------------------------------------------------- handlers
 
 def handle_parro_get_unread(args: dict, **_) -> str:
@@ -252,16 +276,19 @@ def handle_parro_get_calendar(args: dict, **_) -> str:
 
         events = []
         for evt in items:
-            title = evt.get("title") or ""
+            ci = _calendar_item(evt)
+            title = _event_title(evt)
             entry = {
                 "event_id": _link_id(evt) or evt.get("id"),
                 "event_type": "calendar",
                 "title": title,
-                "date": evt.get("sortDate") or evt.get("createdAt", ""),
+                "date": _event_date(evt),
                 "children": [c.get("child", {}).get("firstname", "") for c in evt.get("children", [])],
                 "cancelled": evt.get("cancelled", False),
                 "last_modified_at": evt.get("lastModifiedAt", ""),
             }
+            if ci.get("type"):
+                entry["item_type"] = ci["type"]
             if query and not _text_matches(title, query):
                 continue
             events.append(entry)
@@ -287,15 +314,23 @@ def handle_parro_get_event_detail(args: dict, **_) -> str:
         }
         dtype = dtype_map.get(event_type)
         detail = get_client().get_event_detail(event_id, dtype=dtype)
-        return json.dumps({
+        ci = _calendar_item(detail)
+        payload = {
             "event_id": event_id,
             "dtype": detail.get("dtype", ""),
-            "title": detail.get("title") or "",
-            "body": detail.get("contents") or detail.get("body") or detail.get("text") or "",
-            "date": detail.get("sortDate") or detail.get("createdAt", ""),
+            "title": _event_title(detail),
+            "body": _event_body(detail),
+            "date": _event_date(detail),
             "cancelled": detail.get("cancelled", False),
             "last_modified_at": detail.get("lastModifiedAt", ""),
-        })
+        }
+        if ci.get("type"):
+            payload["item_type"] = ci["type"]
+        if ci.get("startDate"):
+            payload["start_date"] = ci["startDate"]
+        if ci.get("endDate"):
+            payload["end_date"] = ci["endDate"]
+        return json.dumps(payload)
     except Exception as exc:
         logger.error("parro_get_event_detail: %s", exc)
         return json.dumps({"error": str(exc)})
