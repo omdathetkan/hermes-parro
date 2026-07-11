@@ -1,7 +1,7 @@
 """Parro tool handlers."""
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .client import get_client
 
@@ -46,6 +46,17 @@ def _after(timestamp: str | None, since: str | None) -> bool:
 
 def _today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00")
+
+
+def _one_month_ago_iso() -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00")
+
+
+def _since_arg(args: dict, default: str) -> str:
+    since = args.get("since")
+    if since is None or (isinstance(since, str) and not since.strip()):
+        return default
+    return str(since).strip()
 
 
 def _text_matches(text: str, query: str) -> bool:
@@ -170,7 +181,7 @@ def handle_parro_get_messages(args: dict, **_) -> str:
         client = get_client()
         chatroom_id = args.get("chatroom_id")
         unread_only = args.get("unread_only", True)
-        since = args.get("since")
+        since = _since_arg(args, _one_month_ago_iso())
         query = _query_arg(args)
         limit = _int_arg(args, "limit", 20)
         my_id = str(client.get_my_identity_id())
@@ -214,7 +225,7 @@ def handle_parro_get_messages(args: dict, **_) -> str:
 
         messages.sort(key=lambda m: m["timestamp"], reverse=True)
         messages = messages[:limit]
-        payload: dict = {"messages": messages, "count": len(messages)}
+        payload: dict = {"messages": messages, "count": len(messages), "since": since}
         if query:
             payload["query"] = query
         return json.dumps(payload)
@@ -226,7 +237,7 @@ def handle_parro_get_messages(args: dict, **_) -> str:
 def handle_parro_get_announcements(args: dict, **_) -> str:
     try:
         client = get_client()
-        since = args.get("since")
+        since = _since_arg(args, _one_month_ago_iso())
         query = _query_arg(args)
         limit = _int_arg(args, "limit", 10)
         groups = client.get_groups()
@@ -257,7 +268,7 @@ def handle_parro_get_announcements(args: dict, **_) -> str:
 
         announcements.sort(key=lambda a: a["last_modified_at"], reverse=True)
         announcements = announcements[:limit]
-        payload: dict = {"announcements": announcements, "count": len(announcements)}
+        payload: dict = {"announcements": announcements, "count": len(announcements), "since": since}
         if query:
             payload["query"] = query
         return json.dumps(payload)

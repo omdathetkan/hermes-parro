@@ -1,11 +1,19 @@
 """JSON schemas for all Parro tools."""
 
-_SINCE = {
+_SINCE_RECENT = {
     "type": "string",
     "description": (
-        "ISO 8601 datetime to filter results. Only items modified/created after "
-        "this timestamp are returned. Example: '2026-07-01T00:00:00'. "
-        "Omit to return all available items."
+        "Only return items modified/created after this ISO 8601 datetime "
+        "(e.g. '2026-06-01T00:00:00'). Defaults to 1 month ago if omitted. "
+        "Pass an earlier date to search further back."
+    ),
+}
+
+_SINCE_CALENDAR = {
+    "type": "string",
+    "description": (
+        "Only return calendar events on or after this ISO 8601 datetime. "
+        "Defaults to today if omitted. Pass an earlier date to include past events."
     ),
 }
 
@@ -71,9 +79,10 @@ PARRO_LIST_CHATS_SCHEMA = {
 PARRO_GET_MESSAGES_SCHEMA = {
     "name": "parro_get_messages",
     "description": (
-        "Read chat messages. Defaults to unread chatrooms only (max 20 messages). "
-        "Pass chatroom_id when you already know the room (from parro_list_chats or "
-        "parro_start_chat). Check parro_get_unread first to see if there is anything new."
+        "Read chat messages from the last month by default. Defaults to unread chatrooms "
+        "only (max 20 messages). Pass 'since' to search further back or narrow the window. "
+        "The response includes the 'since' value used. Pass chatroom_id when you already "
+        "know the room. Check parro_get_unread first for new activity."
     ),
     "parameters": {
         "type": "object",
@@ -87,10 +96,13 @@ PARRO_GET_MESSAGES_SCHEMA = {
                 "description": "Only fetch chatrooms with unread messages (default: true).",
                 "default": True,
             },
-            "since": _SINCE,
+            "since": _SINCE_RECENT,
             "query": {
                 **_QUERY,
-                "description": "Filter messages by text content or chatroom name.",
+                "description": (
+                    "Filter messages by text content or chatroom name. "
+                    "Searches within the since window (default: last month)."
+                ),
             },
             "limit": {
                 **_LIMIT,
@@ -105,17 +117,21 @@ PARRO_GET_MESSAGES_SCHEMA = {
 PARRO_GET_ANNOUNCEMENTS_SCHEMA = {
     "name": "parro_get_announcements",
     "description": (
-        "List recent school announcement summaries (title + date, no body). "
-        "Returns at most 10 by default. Use 'query' to search for a specific topic. "
-        "Call parro_get_event_detail with the event_id when the user wants the full text."
+        "List school announcement summaries from the last month by default (title + date, "
+        "no body). Returns at most 10. Pass 'since' to search further back. The response "
+        "includes the 'since' value used. Use 'query' to filter by topic. "
+        "Call parro_get_event_detail for the full text."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "since": _SINCE,
+            "since": _SINCE_RECENT,
             "query": {
                 **_QUERY,
-                "description": "Filter announcements by title or group name.",
+                "description": (
+                    "Filter announcements by title or group name. "
+                    "Searches within the since window (default: last month)."
+                ),
             },
             "limit": {
                 **_LIMIT,
@@ -137,13 +153,7 @@ PARRO_GET_CALENDAR_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "since": {
-                "type": "string",
-                "description": (
-                    "Start date for calendar events (ISO 8601). "
-                    "Defaults to today if omitted."
-                ),
-            },
+            "since": _SINCE_CALENDAR,
             "query": {
                 **_QUERY,
                 "description": "Filter calendar events by title.",

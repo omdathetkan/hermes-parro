@@ -1,5 +1,5 @@
 name: hermes-parro
-version: "1.4"
+version: "1.5"
 description: >-
   Read and reply to Parro school communication. Use parro_get_contacts(query=...)
   to look up parents/teachers by name, parro_start_chat to open a chat, then
